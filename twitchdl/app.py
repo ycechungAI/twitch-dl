@@ -68,24 +68,8 @@ class VideoListItem(urwid.WidgetWrap):
         return super().mouse_event(size, event, button, x, y, focus)
 
 
-class VideoDetails(urwid.Frame):
+class VideoDetails(urwid.Pile):
     def __init__(self, video):
-        super().__init__(
-            body=self.draw_body(video),
-            footer=self.draw_footer(video),
-        )
-
-    def draw_footer(self, video):
-        return urwid.Text([
-            "Actions: ",
-            ("cyan_bold", "V"),
-            ("cyan", "iew"),
-            " ",
-            ("cyan_bold", "D"),
-            ("cyan", "ownload"),
-        ])
-
-    def draw_body(self, video):
         video_id = video['_id'][1:]
         duration = format_duration(video['length'])
         published_at = video['published_at'].replace('T', ' @ ').replace('Z', '')
@@ -117,10 +101,19 @@ class VideoDetails(urwid.Frame):
                 ]))
             )
 
-        contents.append(('pack', urwid.Divider()))
+        contents.append(('weight', 1, urwid.SolidFill(" ")))
+        contents.append(('pack', urwid.Divider("-")))
         contents.append(('pack', urwid.Text(("italic", video['url']))))
+        contents.append(('pack', urwid.Text([
+            "Actions: ",
+            ("cyan_bold", "V"),
+            ("cyan", "iew"),
+            " ",
+            ("cyan_bold", "D"),
+            ("cyan", "ownload"),
+        ])))
 
-        return urwid.Pile(contents)
+        super().__init__(contents)
 
 
 class App:
