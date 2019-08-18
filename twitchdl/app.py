@@ -1,9 +1,10 @@
 import json
-import urwid
 import logging
+import urwid
 import webbrowser
 
 from twitchdl.commands import format_duration
+from twitchdl.twitch import get_channel_videos
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -116,7 +117,7 @@ class VideoDetails(urwid.Pile):
         super().__init__(contents)
 
 
-class App:
+class VideoList:
     def __init__(self, videos):
         self.videos = videos
         self.details_shown = False
@@ -203,7 +204,11 @@ class App:
         return self.videos[self.video_list.body.focus]
 
 
+# videos = get_channel_videos("bananasaurus_rex", limit=100)
+# app = VideoList(videos["videos"])
+# app.run()
+
 with open('tmp/data.json') as f:
     data = json.load(f)
-    app = App(data['videos'])
+    app = VideoList(data['videos'])
     app.run()

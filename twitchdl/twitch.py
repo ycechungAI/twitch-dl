@@ -27,7 +27,7 @@ def get_video(video_id):
     return authenticated_get(url).json()
 
 
-def get_channel_videos(channel_name, limit, offset, sort):
+def get_channel_videos(channel_name, limit=10, offset=0, sort="time"):
     """
     https://dev.twitch.tv/docs/v5/reference/channels#get-channel-videos
     """
