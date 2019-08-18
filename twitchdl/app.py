@@ -1,17 +1,23 @@
 import json
 import urwid
 import logging
+import webbrowser
+
+from twitchdl.commands import format_duration
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
 PALETTE = [
+    ('italic', 'white', ''),
     ('reversed', 'standout', ''),
     ('header', 'white', 'dark blue'),
     ('header_bg', 'black', 'dark red'),
     ('selected', 'white', 'dark green'),
-    ('green', 'light green', ''),
+    ('green', 'dark green', ''),
+    ('cyan', 'dark cyan', ''),
+    ('cyan_bold', 'dark cyan,bold', ''),
     ('green_selected', 'white,bold', 'dark green'),
     ('blue', 'light blue', ''),
     ('blue_bold', 'light blue, bold', ''),
@@ -50,15 +56,71 @@ class VideoListItem(urwid.WidgetWrap):
     def keypress(self, size, key):
         if self._command_map[key] == urwid.ACTIVATE:
             self._emit('click')
+            return
 
         return key
 
     def mouse_event(self, size, event, button, x, y, focus):
-        if button != 1 or not urwid.is_mouse_press(event):
-            return False
+        logger.info("foo")
+        if button == 1:
+            self._emit('click')
 
-        self._emit('click')
-        return True
+        return super().mouse_event(size, event, button, x, y, focus)
+
+
+class VideoDetails(urwid.Frame):
+    def __init__(self, video):
+        super().__init__(
+            body=self.draw_body(video),
+            footer=self.draw_footer(video),
+        )
+
+    def draw_footer(self, video):
+        return urwid.Text([
+            "Actions: ",
+            ("cyan_bold", "V"),
+            ("cyan", "iew"),
+            " ",
+            ("cyan_bold", "D"),
+            ("cyan", "ownload"),
+        ])
+
+    def draw_body(self, video):
+        video_id = video['_id'][1:]
+        duration = format_duration(video['length'])
+        published_at = video['published_at'].replace('T', ' @ ').replace('Z', '')
+        channel_name = video['channel']['display_name']
+
+        # (name, resolution, frame rate)
+        resolutions = reversed([
+            (k, v, str(round(video["fps"][k])))
+            for k, v in video["resolutions"].items()
+        ])
+
+        contents = [
+            ('pack', urwid.Text(("blue_bold", video_id))),
+            ('pack', urwid.Text(("green", video['title']))),
+            ('pack', urwid.Divider("~")),
+            ('pack', urwid.Text([("cyan", channel_name), " playing ", ("cyan", video['game'])])),
+            ('pack', urwid.Divider("~")),
+            ('pack', urwid.Text(["  Published: ", ("cyan", published_at)])),
+            ('pack', urwid.Text(["     Length: ", ("cyan", duration)])),
+            ('pack', urwid.Divider("~")),
+            ('pack', urwid.Text("Resolutions: ")),
+        ]
+
+        for name, resolution, fps in resolutions:
+            contents.append(
+                ('pack', urwid.Text([
+                    " * ", ("cyan", name),
+                    " (", resolution, " @ ", fps, "fps)"
+                ]))
+            )
+
+        contents.append(('pack', urwid.Divider()))
+        contents.append(('pack', urwid.Text(("italic", video['url']))))
+
+        return urwid.Pile(contents)
 
 
 class App:
@@ -66,8 +128,10 @@ class App:
         self.videos = videos
         self.details_shown = False
 
+        # TODO: handle no videos
+
         self.header = self.build_header()
-        self.details = urwid.Pile([])
+        self.details = VideoDetails(videos[0])
         self.video_list = self.build_video_list(videos)
 
         self.loop = urwid.MainLoop(
@@ -85,7 +149,6 @@ class App:
 
         walker = urwid.SimpleFocusListWalker(body)
         urwid.connect_signal(walker, 'modified', self.video_selected)
-
         return urwid.ListBox(walker)
 
     def build_header(self):
@@ -93,8 +156,8 @@ class App:
         header = urwid.AttrMap(header, 'header')
         return urwid.Padding(header)
 
-    def build_frame(self, details):
-        if details:
+    def build_frame(self, show_details):
+        if show_details:
             main_widget = urwid.Columns([
                 ("weight", 50, self.video_list),
                 ("weight", 50, self.details),
@@ -116,16 +179,17 @@ class App:
             self.loop.widget = self.build_frame(False)
 
     def draw_details(self, video):
-        video_id = video['_id'][1:]
-
-        self.details.contents = [
-            (urwid.Text(("blue", video_id)), ('pack', None)),
-            (urwid.Text(video['title']), ('pack', None)),
-        ]
+        self.details = VideoDetails(video)
+        self.loop.widget = self.build_frame(True)
 
     def handle_keypress(self, key):
         if key in ('q', 'Q'):
             raise urwid.ExitMainLoop()
+
+        if key in ["v", "V"]:
+            video = self.get_focused_video()
+            # TODO: open in VLC
+            webbrowser.open(video["url"])
 
         if key == 'esc':
             self.hide_details()
