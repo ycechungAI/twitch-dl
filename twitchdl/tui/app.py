@@ -1,16 +1,15 @@
-import json
 import logging
 import urwid
 import webbrowser
 import requests
+import threading
 
 from concurrent.futures import ThreadPoolExecutor
+from threading import current_thread
 
 from twitchdl import CLIENT_ID
-from twitchdl.commands import format_duration
-from twitchdl import twitch
+from twitchdl.utils import format_duration
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("twitchdl")
 
 
@@ -29,6 +28,33 @@ PALETTE = [
     ('blue_bold', 'light blue, bold', ''),
     ('blue_selected', 'white,bold', 'dark blue'),
 ]
+
+
+def authenticated_get(url, params={}):
+    headers = {'Client-ID': CLIENT_ID}
+    return requests.get(url, params, headers=headers)
+
+
+class ThreadSafeLoop(urwid.MainLoop):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.refresh_lock = threading.RLock()
+
+    def entering_idle(self):
+        with self.refresh_lock:
+            return super().entering_idle()
+
+    def refresh(self):
+        """
+        explicitely refresh user interface; useful when changing widgets dynamically
+        """
+        logger.debug("refresh user interface")
+        try:
+            with self.refresh_lock:
+                self.draw_screen()
+        except AssertionError:
+            logger.warning("application is not running")
+            pass
 
 
 class SelectableText(urwid.Text):
@@ -139,6 +165,7 @@ class VideoList:
         self.loop = urwid.MainLoop(
             self.frame,
             palette=PALETTE,
+            event_loop=urwid.AsyncioEventLoop(),
             unhandled_input=self.handle_keypress,
         )
 
@@ -203,7 +230,7 @@ class VideoList:
             return
 
     def show_download_overlay(self, video):
-        self.loop.widget = DownloadView(video)
+        self.loop.widget = DownloadView(video, self.loop)
         self.loop.widget.run()
 
     def run(self):
@@ -242,9 +269,11 @@ class ResolutionText(urwid.Text):
 
 
 class DownloadView(urwid.Overlay):
-    def __init__(self, video):
-        self.executor = ThreadPoolExecutor(max_workers=1)
+    def __init__(self, video, loop):
+        logger.info("outside: " + str(current_thread()))
         self.video = video
+        self.loop = loop
+        self.executor = ThreadPoolExecutor(max_workers=1)
 
         # TODO: shut down executor before closing
 
@@ -264,62 +293,49 @@ class DownloadView(urwid.Overlay):
             min_height=12
         )
 
-    def video_loaded(self, future):
-        """Called when the video details have been loaded."""
+    def run(self):
+        # Asynchronously fetch the video info
+        future = self.executor.submit(authenticated_get, self.video["_links"]["self"])
+        future.add_done_callback(self.video_loaded_callback)
+
+    def video_loaded_callback(self, future):
+        """
+        Called by the executor thread when the video details have been loaded.
+        Uses `set_alarm_in` to run the callback in the main thread.
+        """
         response = future.result()
+        self.loop.set_alarm_in(0, self.video_loaded, user_data=response)
+
+    def video_loaded(self, main_loop, response):
         if not response.ok:
             self.pile.contents.append((urwid.Text(("red", "An error occured :(")), ("pack", None)))
             self.pile.contents.append((urwid.Button("Go back"), ("pack", None)))
             return
 
         video = response.json()
-        logger.info(video)
 
-        self.top_w = urwid.LineBox(urwid.Text("hi!"), title="Download video")
+        # Show available resolutions for download
+        resolutions = [(urwid.Text("Pick quality:"), ('pack', None))]
+        for name, res, fps in get_resolutions(video):
+            text = ResolutionText(name, res, fps)
+            urwid.connect_signal(text, 'click', self.resolution_selected, user_args=[name])
+            resolutions.append(
+                (urwid.AttrMap(text, None, focus_map='blue_selected'), ('pack', None))
+            )
 
-    def run(self):
-        url = self.video["_links"]["self"]
-        headers = {'Client-ID': CLIENT_ID}
+        for res in resolutions:
+            self.pile.contents = resolutions
 
-        # Asynchronously fetch the video info
-        future = self.executor.submit(requests.get, url, headers=headers)
-        future.add_done_callback(self.video_loaded)
+        # maybe ???
+        # https://github.com/CanonicalLtd/subiquity/blob/master/subiquitycore/core.py#L280
 
-    #     resolutions = [
-    #         urwid.Text("Pick quality:")
-    #     ]
-    #     for name, res, fps in get_resolutions(video):
-    #         text = ResolutionText(name, res, fps)
-    #         urwid.connect_signal(text, 'click', self.resolution_selected, user_args=[name])
-    #         resolutions.append(
-    #             urwid.AttrMap(
-    #                 text,
-    #                 None,
-    #                 focus_map='blue_selected'
-    #             )
-    #         )
+        # educational:
+        # https://github.com/TomasTomecek/sen/blob/master/sen/tui/ui.py
 
-    #     top_w = urwid.Pile(resolutions)
-    #     top_w = urwid.LineBox(top_w, title="Download video")
-    #     bottom_w = urwid.SolidFill()
-
-    #     super().__init__(
-    #         top_w, bottom_w,
-    #         'center', ('relative', 80),
-    #         'middle', 'pack',
-    #         min_width=20,
-    #         min_height=12
-    #     )
 
     def resolution_selected(self, widget, name):
         logger.info("Selected resulution: {}".format(name))
 
-
-# videos = twitch.get_channel_videos("bananasaurus_rex", limit=100)
-# app = VideoList(videos["videos"])
-# app.run()
-
-with open('tmp/data.json') as f:
-    data = json.load(f)
-    app = VideoList(data['videos'])
-    app.run()
+    def keypress(self, size, key):
+        logger.info("overlay keypress {}".format(key))
+        return key

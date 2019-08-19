@@ -1,3 +1,4 @@
+import json
 import os
 import pathlib
 import re
@@ -9,9 +10,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
 
 from twitchdl import twitch
+from twitchdl.utils import format_duration, format_size
 from twitchdl.download import download_file
 from twitchdl.exceptions import ConsoleError
 from twitchdl.output import print_out
+from twitchdl.tui.app import VideoList
 from twitchdl.utils import slugify
 
 
@@ -27,37 +30,6 @@ def read_int(msg, min, max, default):
                 return int(val)
         except ValueError:
             pass
-
-
-def format_size(bytes_):
-    if bytes_ < 1024:
-        return str(bytes_)
-
-    kilo = bytes_ / 1024
-    if kilo < 1024:
-        return "{:.1f}K".format(kilo)
-
-    mega = kilo / 1024
-    if mega < 1024:
-        return "{:.1f}M".format(mega)
-
-    return "{:.1f}G".format(mega / 1024)
-
-
-def format_duration(total_seconds):
-    total_seconds = int(total_seconds)
-    hours = total_seconds // 3600
-    remainder = total_seconds % 3600
-    minutes = remainder // 60
-    seconds = total_seconds % 60
-
-    if hours:
-        return "{} h {} min".format(hours, minutes)
-
-    if minutes:
-        return "{} min {} sec".format(minutes, seconds)
-
-    return "{} sec".format(seconds)
 
 
 def _print_video(video):
@@ -221,3 +193,12 @@ def download(video_id, max_workers, format='mkv', start=None, end=None, **kwargs
         os.unlink(path)
 
     print_out("\nDownloaded: {}".format(target))
+
+
+def tui(**kwargs):
+    import logging
+    logging.basicConfig(level=logging.DEBUG)
+    with open('tmp/data.json') as f:
+        data = json.load(f)
+    app = VideoList(data['videos'])
+    app.run()

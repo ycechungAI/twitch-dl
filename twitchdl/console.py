@@ -34,6 +34,11 @@ def time(value):
 
 COMMANDS = [
     Command(
+        name="tui",
+        description="Run a terminal user interface",
+        arguments=[],
+    ),
+    Command(
         name="videos",
         description="List videos from a channel",
         arguments=[
