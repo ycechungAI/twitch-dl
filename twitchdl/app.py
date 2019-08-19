@@ -2,12 +2,16 @@ import json
 import logging
 import urwid
 import webbrowser
+import requests
 
+from concurrent.futures import ThreadPoolExecutor
+
+from twitchdl import CLIENT_ID
 from twitchdl.commands import format_duration
-from twitchdl.twitch import get_channel_videos
+from twitchdl import twitch
 
 logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("twitchdl")
 
 
 PALETTE = [
@@ -21,6 +25,7 @@ PALETTE = [
     ('cyan_bold', 'dark cyan,bold', ''),
     ('green_selected', 'white,bold', 'dark green'),
     ('blue', 'light blue', ''),
+    ('yellow', 'yellow', ''),
     ('blue_bold', 'light blue, bold', ''),
     ('blue_selected', 'white,bold', 'dark blue'),
 ]
@@ -62,11 +67,17 @@ class VideoListItem(urwid.WidgetWrap):
         return key
 
     def mouse_event(self, size, event, button, x, y, focus):
-        logger.info("foo")
         if button == 1:
             self._emit('click')
 
         return super().mouse_event(size, event, button, x, y, focus)
+
+
+def get_resolutions(video):
+    return reversed([
+        (k, v, str(round(video["fps"][k])))
+        for k, v in video["resolutions"].items()
+    ])
 
 
 class VideoDetails(urwid.Pile):
@@ -75,12 +86,6 @@ class VideoDetails(urwid.Pile):
         duration = format_duration(video['length'])
         published_at = video['published_at'].replace('T', ' @ ').replace('Z', '')
         channel_name = video['channel']['display_name']
-
-        # (name, resolution, frame rate)
-        resolutions = reversed([
-            (k, v, str(round(video["fps"][k])))
-            for k, v in video["resolutions"].items()
-        ])
 
         contents = [
             ('pack', urwid.Text(("blue_bold", video_id))),
@@ -94,7 +99,7 @@ class VideoDetails(urwid.Pile):
             ('pack', urwid.Text("Resolutions: ")),
         ]
 
-        for name, resolution, fps in resolutions:
+        for name, resolution, fps in get_resolutions(video):
             contents.append(
                 ('pack', urwid.Text([
                     " * ", ("cyan", name),
@@ -128,8 +133,11 @@ class VideoList:
         self.details = VideoDetails(videos[0])
         self.video_list = self.build_video_list(videos)
 
+        self.frame = self.build_frame(self.details_shown)
+        self.download_overlay = None
+
         self.loop = urwid.MainLoop(
-            self.build_frame(self.details_shown),
+            self.frame,
             palette=PALETTE,
             unhandled_input=self.handle_keypress,
         )
@@ -180,14 +188,23 @@ class VideoList:
         if key in ('q', 'Q'):
             raise urwid.ExitMainLoop()
 
+        # TODO: open in VLC
         if key in ["v", "V"]:
             video = self.get_focused_video()
-            # TODO: open in VLC
             webbrowser.open(video["url"])
+
+        if key in ["d", "D"]:
+            video = self.get_focused_video()
+            self.show_download_overlay(video)
+            return True
 
         if key == 'esc':
             self.hide_details()
             return
+
+    def show_download_overlay(self, video):
+        self.loop.widget = DownloadView(video)
+        self.loop.widget.run()
 
     def run(self):
         self.loop.run()
@@ -204,7 +221,101 @@ class VideoList:
         return self.videos[self.video_list.body.focus]
 
 
-# videos = get_channel_videos("bananasaurus_rex", limit=100)
+class ResolutionText(urwid.Text):
+    signals = ["click"]
+    _selectable = True
+
+    def __init__(self, name, res, fps):
+        super().__init__(" > " + name)
+
+    def keypress(self, size, key):
+        if self._command_map[key] == urwid.ACTIVATE:
+            self._emit('click')
+            return
+
+        return key
+
+    def mouse_event(self, size, event, button, x, y, focus):
+        if event == "mouse press" and button == 1:
+            self._emit('click')
+            return
+
+
+class DownloadView(urwid.Overlay):
+    def __init__(self, video):
+        self.executor = ThreadPoolExecutor(max_workers=1)
+        self.video = video
+
+        # TODO: shut down executor before closing
+
+        self.pile = urwid.Pile([
+            urwid.Text("Loading video..."),
+            urwid.Text(("yellow", video["_links"]["self"])),
+        ])
+
+        top_w = urwid.LineBox(self.pile, title="Download video")
+
+        bottom_w = urwid.SolidFill()
+        super().__init__(
+            top_w, bottom_w,
+            'center', ('relative', 80),
+            'middle', 'pack',
+            min_width=20,
+            min_height=12
+        )
+
+    def video_loaded(self, future):
+        """Called when the video details have been loaded."""
+        response = future.result()
+        if not response.ok:
+            self.pile.contents.append((urwid.Text(("red", "An error occured :(")), ("pack", None)))
+            self.pile.contents.append((urwid.Button("Go back"), ("pack", None)))
+            return
+
+        video = response.json()
+        logger.info(video)
+
+        self.top_w = urwid.LineBox(urwid.Text("hi!"), title="Download video")
+
+    def run(self):
+        url = self.video["_links"]["self"]
+        headers = {'Client-ID': CLIENT_ID}
+
+        # Asynchronously fetch the video info
+        future = self.executor.submit(requests.get, url, headers=headers)
+        future.add_done_callback(self.video_loaded)
+
+    #     resolutions = [
+    #         urwid.Text("Pick quality:")
+    #     ]
+    #     for name, res, fps in get_resolutions(video):
+    #         text = ResolutionText(name, res, fps)
+    #         urwid.connect_signal(text, 'click', self.resolution_selected, user_args=[name])
+    #         resolutions.append(
+    #             urwid.AttrMap(
+    #                 text,
+    #                 None,
+    #                 focus_map='blue_selected'
+    #             )
+    #         )
+
+    #     top_w = urwid.Pile(resolutions)
+    #     top_w = urwid.LineBox(top_w, title="Download video")
+    #     bottom_w = urwid.SolidFill()
+
+    #     super().__init__(
+    #         top_w, bottom_w,
+    #         'center', ('relative', 80),
+    #         'middle', 'pack',
+    #         min_width=20,
+    #         min_height=12
+    #     )
+
+    def resolution_selected(self, widget, name):
+        logger.info("Selected resulution: {}".format(name))
+
+
+# videos = twitch.get_channel_videos("bananasaurus_rex", limit=100)
 # app = VideoList(videos["videos"])
 # app.run()
 
