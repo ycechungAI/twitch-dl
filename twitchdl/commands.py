@@ -14,7 +14,7 @@ from twitchdl.utils import format_duration, format_size
 from twitchdl.download import download_file
 from twitchdl.exceptions import ConsoleError
 from twitchdl.output import print_out
-from twitchdl.tui.app import VideoList
+from twitchdl.tui.app import TUI
 from twitchdl.utils import slugify
 
 
@@ -200,5 +200,5 @@ def tui(**kwargs):
     logging.basicConfig(level=logging.DEBUG)
     with open('tmp/data.json') as f:
         data = json.load(f)
-    app = VideoList(data['videos'])
+    app, loop = TUI.create(data['videos'])
     app.run()

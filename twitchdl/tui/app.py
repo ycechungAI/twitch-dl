@@ -2,32 +2,16 @@ import logging
 import urwid
 import webbrowser
 import requests
-import threading
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import current_thread
 
 from twitchdl import CLIENT_ID
 from twitchdl.utils import format_duration
+from twitchdl.tui.constants import PALETTE
+
 
 logger = logging.getLogger("twitchdl")
-
-
-PALETTE = [
-    ('italic', 'white', ''),
-    ('reversed', 'standout', ''),
-    ('header', 'white', 'dark blue'),
-    ('header_bg', 'black', 'dark red'),
-    ('selected', 'white', 'dark green'),
-    ('green', 'dark green', ''),
-    ('cyan', 'dark cyan', ''),
-    ('cyan_bold', 'dark cyan,bold', ''),
-    ('green_selected', 'white,bold', 'dark green'),
-    ('blue', 'light blue', ''),
-    ('yellow', 'yellow', ''),
-    ('blue_bold', 'light blue, bold', ''),
-    ('blue_selected', 'white,bold', 'dark blue'),
-]
 
 
 def authenticated_get(url, params={}):
@@ -35,26 +19,57 @@ def authenticated_get(url, params={}):
     return requests.get(url, params, headers=headers)
 
 
-class ThreadSafeLoop(urwid.MainLoop):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.refresh_lock = threading.RLock()
+def get_resolutions(video):
+    return reversed([
+        (k, v, str(round(video["fps"][k])))
+        for k, v in video["resolutions"].items()
+    ])
 
-    def entering_idle(self):
-        with self.refresh_lock:
-            return super().entering_idle()
 
-    def refresh(self):
-        """
-        explicitely refresh user interface; useful when changing widgets dynamically
-        """
-        logger.debug("refresh user interface")
-        try:
-            with self.refresh_lock:
-                self.draw_screen()
-        except AssertionError:
-            logger.warning("application is not running")
-            pass
+class TUI(urwid.Frame):
+    """Main TUI frame."""
+
+    @classmethod
+    def create(cls, videos):
+        """Factory method, sets up TUI and an event loop."""
+
+        tui = cls(videos)
+        loop = urwid.MainLoop(
+            tui,
+            palette=PALETTE,
+            event_loop=urwid.AsyncioEventLoop(),
+            unhandled_input=tui.unhandled_input,
+        )
+        tui.loop = loop
+
+        return tui, loop
+
+    def __init__(self, videos):
+        self.loop = None  # set in `create`
+
+        header = urwid.Text(('header', 'twitch-dl '), align='left')
+        header = urwid.AttrMap(header, 'header')
+        header = urwid.Padding(header)
+
+        self.video_list = VideoList(videos)
+
+        super().__init__(self.video_list, header=header)
+
+    def run(self):
+        self.loop.run()
+
+    def unhandled_input(self, key):
+        if key in ('q', 'Q'):
+            raise urwid.ExitMainLoop()
+
+        if key in ["d", "D"]:
+            video = self.video_list.get_focused_video()
+            self.show_download_overlay(video)
+            return
+
+    def show_download_overlay(self, video):
+        self.loop.widget = DownloadView(video, self.loop)
+        self.loop.widget.run()
 
 
 class SelectableText(urwid.Text):
@@ -99,13 +114,6 @@ class VideoListItem(urwid.WidgetWrap):
         return super().mouse_event(size, event, button, x, y, focus)
 
 
-def get_resolutions(video):
-    return reversed([
-        (k, v, str(round(video["fps"][k])))
-        for k, v in video["resolutions"].items()
-    ])
-
-
 class VideoDetails(urwid.Pile):
     def __init__(self, video):
         video_id = video['_id'][1:]
@@ -148,26 +156,32 @@ class VideoDetails(urwid.Pile):
         super().__init__(contents)
 
 
-class VideoList:
+class VideoList(urwid.Columns):
     def __init__(self, videos):
         self.videos = videos
         self.details_shown = False
 
         # TODO: handle no videos
 
-        self.header = self.build_header()
         self.details = VideoDetails(videos[0])
         self.video_list = self.build_video_list(videos)
 
-        self.frame = self.build_frame(self.details_shown)
-        self.download_overlay = None
+        super().__init__([
+            ("weight", 50, self.video_list)
+        ], dividechars=1)
 
-        self.loop = urwid.MainLoop(
-            self.frame,
-            palette=PALETTE,
-            event_loop=urwid.AsyncioEventLoop(),
-            unhandled_input=self.handle_keypress,
-        )
+        logger.info(self.widget_list)
+
+    def refresh(self):
+        if self.details_shown:
+            self.contents = [
+                (self.video_list, ("weight", 50, False)),
+                (self.details, ("weight", 50, False)),
+            ]
+        else:
+            self.contents = [
+                (self.video_list, ("weight", 50, False)),
+            ]
 
     def build_video_list(self, videos):
         body = []
@@ -180,69 +194,40 @@ class VideoList:
         urwid.connect_signal(walker, 'modified', self.video_selected)
         return urwid.ListBox(walker)
 
-    def build_header(self):
-        header = urwid.Text(('header', 'twitch-dl '), align='left')
-        header = urwid.AttrMap(header, 'header')
-        return urwid.Padding(header)
-
-    def build_frame(self, show_details):
-        if show_details:
-            main_widget = urwid.Columns([
-                ("weight", 50, self.video_list),
-                ("weight", 50, self.details),
-            ], dividechars=1)
-        else:
-            main_widget = self.video_list
-
-        return urwid.Frame(main_widget, header=self.header)
-
     def show_details(self, *args):
         if not self.details_shown:
             self.details_shown = True
-            self.video_selected()
-            self.loop.widget = self.build_frame(True)
+            self.refresh()
 
     def hide_details(self):
         if self.details_shown:
             self.details_shown = False
-            self.loop.widget = self.build_frame(False)
+            self.refresh()
 
     def draw_details(self, video):
         self.details = VideoDetails(video)
-        self.loop.widget = self.build_frame(True)
+        self.refresh()
 
-    def handle_keypress(self, key):
-        if key in ('q', 'Q'):
-            raise urwid.ExitMainLoop()
-
-        # TODO: open in VLC
-        if key in ["v", "V"]:
+    def keypress(self, pos, key):
+        if key in ("v", "V"):
             video = self.get_focused_video()
             webbrowser.open(video["url"])
+            return
 
-        if key in ["d", "D"]:
-            video = self.get_focused_video()
-            self.show_download_overlay(video)
-            return True
+        # TODO: open in VLC/MPV
 
         if key == 'esc':
             self.hide_details()
             return
 
-    def show_download_overlay(self, video):
-        self.loop.widget = DownloadView(video, self.loop)
-        self.loop.widget.run()
+        return super().keypress(pos, key)
 
     def run(self):
         self.loop.run()
 
     def video_selected(self):
         """Triggered when the focused video has changed."""
-        if not self.details_shown:
-            return
-
-        video = self.get_focused_video()
-        self.draw_details(video)
+        self.draw_details(self.get_focused_video())
 
     def get_focused_video(self):
         return self.videos[self.video_list.body.focus]
