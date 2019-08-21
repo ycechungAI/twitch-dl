@@ -100,17 +100,15 @@ class VideoListItem(urwid.WidgetWrap):
             video["published_at"][11:16],
             video["published_at"][19:],
         )
-        published_at_len = len(published_at)
 
-        published_at = SelectableText(published_at)
-        published_at = urwid.AttrMap(published_at, 'blue', focus_map='blue_selected')
+        text = [("blue", published_at), " ", video["title"]]
+        text = SelectableText(text, wrap="clip")
+        text = urwid.AttrMap(text, None, focus_map={
+            "blue": "blue_selected",
+            "green": "blue_selected",
+        })
 
-        widgets = [
-            ('fixed', published_at_len, published_at),
-            urwid.Text(video["title"], wrap="clip"),
-        ]
-        cols = urwid.Columns(widgets, dividechars=1)
-        self.__super.__init__(cols)
+        super().__init__(text)
 
     def keypress(self, size, key):
         if self._command_map[key] == urwid.ACTIVATE:
