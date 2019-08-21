@@ -57,6 +57,9 @@ class TUI(urwid.Frame):
         self.body = DownloadView(video, self)
         self.body.run()
 
+    def close_download_overlay(self):
+        self.body = self.video_list
+
 
 class ResolutionText(urwid.Text):
     signals = ["click"]
@@ -80,7 +83,6 @@ class ResolutionText(urwid.Text):
 
 class DownloadView(urwid.Overlay):
     def __init__(self, video, tui):
-        logger.info("outside: " + str(current_thread()))
         self.video = video
         self.tui = tui
         self.executor = ThreadPoolExecutor(max_workers=1)
@@ -93,8 +95,8 @@ class DownloadView(urwid.Overlay):
         ])
 
         top_w = urwid.LineBox(self.pile, title="Download video")
-
         bottom_w = urwid.SolidFill()
+
         super().__init__(
             top_w, bottom_w,
             'center', ('relative', 80),
@@ -126,6 +128,7 @@ class DownloadView(urwid.Overlay):
 
         # Show available resolutions for download
         resolutions = [(urwid.Text("Pick quality:"), ('pack', None))]
+        resolutions = []
         for name, res, fps in get_resolutions(video):
             text = ResolutionText(name, res, fps)
             urwid.connect_signal(text, 'click', self.resolution_selected, user_args=[name])
@@ -133,12 +136,21 @@ class DownloadView(urwid.Overlay):
                 (urwid.AttrMap(text, None, focus_map='blue_selected'), ('pack', None))
             )
 
-        for res in resolutions:
-            self.pile.contents = resolutions
+        self.top_w.title = "Select video quality"
+        self.pile.contents = resolutions
 
     def resolution_selected(self, widget, name):
         logger.info("Selected resulution: {}".format(name))
 
-    def keypress(self, size, key):
-        logger.info("overlay keypress {}".format(key))
-        return key
+    def keypress(self, pos, key):
+        logger.info("DownloadView keypress: {}".format(key))
+
+        # Don't re-download if D is pressed
+        if key in ['d', 'D']:
+            return
+
+        # Close download window on ESC
+        if key == 'esc':
+            self.tui.close_download_overlay()
+
+        return super().keypress(pos, key)
