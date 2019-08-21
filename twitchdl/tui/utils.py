@@ -11,10 +11,10 @@ def authenticated_get(url, params={}):
 
 
 def get_resolutions(video):
-    return reversed([
+    return list(reversed([
         (k, v, str(round(video["fps"][k])))
         for k, v in video["resolutions"].items()
-    ])
+    ]))
 
 
 def parse_datetime(value):

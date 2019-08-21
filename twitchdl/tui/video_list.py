@@ -2,16 +2,12 @@ import logging
 import urwid
 import webbrowser
 
-from twitchdl.tui.mixins import Clickable
 from twitchdl.tui.utils import get_resolutions, reformat_datetime
+from twitchdl.tui.widgets import SelectableText
 from twitchdl.utils import format_duration
 
 
 logger = logging.getLogger("twitchdl")
-
-
-class SelectableText(urwid.Text):
-    _selectable = True
 
 
 class VideoList(urwid.Columns):
@@ -42,7 +38,9 @@ class VideoList(urwid.Columns):
     def build_video_list(self, videos):
         body = []
         for video in videos:
-            video_item = VideoListItem(video)
+            published_at = reformat_datetime(video["published_at"])
+            text = [("blue", published_at), " ", video["title"]]
+            video_item = SelectableText(text, wrap="clip")
             urwid.connect_signal(video_item, 'click', self.show_details)
 
             video_item = urwid.AttrMap(video_item, None, focus_map={
@@ -93,15 +91,6 @@ class VideoList(urwid.Columns):
 
     def get_focused_video(self):
         return self.videos[self.video_list.body.focus]
-
-
-class VideoListItem(Clickable, urwid.Text):
-    _selectable = True
-
-    def __init__(self, video):
-        published_at = reformat_datetime(video["published_at"])
-        text = [("blue", published_at), " ", video["title"]]
-        super().__init__(text, wrap="clip")
 
 
 class VideoDetails(urwid.Pile):

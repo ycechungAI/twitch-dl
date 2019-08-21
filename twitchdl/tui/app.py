@@ -4,8 +4,9 @@ import urwid
 from concurrent.futures import ThreadPoolExecutor
 
 from twitchdl.tui.constants import PALETTE
-from twitchdl.tui.video_list import VideoList
 from twitchdl.tui.utils import get_resolutions, authenticated_get
+from twitchdl.tui.video_list import VideoList
+from twitchdl.tui.widgets import SelectableText
 
 logger = logging.getLogger("twitchdl")
 
@@ -59,26 +60,6 @@ class TUI(urwid.Frame):
         self.body = self.video_list
 
 
-class ResolutionText(urwid.Text):
-    signals = ["click"]
-    _selectable = True
-
-    def __init__(self, name, res, fps):
-        super().__init__(" > " + name)
-
-    def keypress(self, size, key):
-        if self._command_map[key] == urwid.ACTIVATE:
-            self._emit('click')
-            return
-
-        return key
-
-    def mouse_event(self, size, event, button, x, y, focus):
-        if event == "mouse press" and button == 1:
-            self._emit('click')
-            return
-
-
 class DownloadView(urwid.Overlay):
     def __init__(self, video, tui):
         self.video = video
@@ -126,13 +107,24 @@ class DownloadView(urwid.Overlay):
         video = response.json()
 
         # Show available resolutions for download
-        resolutions = [(urwid.Text("Pick quality:"), ('pack', None))]
+        # TODO: this should probably be a separate widget instead of reusing this one
         resolutions = []
+
+        focus_map = {
+            "blue": "blue_selected",
+            "yellow": "blue_selected",
+            None: "blue_selected",
+        }
+
         for name, res, fps in get_resolutions(video):
-            text = ResolutionText(name, res, fps)
+            text = SelectableText([
+                ("blue", name), " ",
+                ("yellow", res), " ",
+                fps, "fps"
+            ])
             urwid.connect_signal(text, 'click', self.resolution_selected, user_args=[name])
             resolutions.append(
-                (urwid.AttrMap(text, None, focus_map='blue_selected'), ('pack', None))
+                (urwid.AttrMap(text, None, focus_map=focus_map), ('pack', None))
             )
 
         self.top_w.set_title("Select video quality")
