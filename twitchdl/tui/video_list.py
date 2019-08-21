@@ -2,7 +2,8 @@ import logging
 import urwid
 import webbrowser
 
-from twitchdl.tui.utils import get_resolutions
+from twitchdl.tui.mixins import Clickable
+from twitchdl.tui.utils import get_resolutions, reformat_datetime
 from twitchdl.utils import format_duration
 
 
@@ -43,7 +44,13 @@ class VideoList(urwid.Columns):
         for video in videos:
             video_item = VideoListItem(video)
             urwid.connect_signal(video_item, 'click', self.show_details)
-            body.append(urwid.AttrMap(video_item, None, focus_map='blue_selected'))
+
+            video_item = urwid.AttrMap(video_item, None, focus_map={
+                "blue": "blue_selected",
+                "green": "blue_selected",
+                None: "blue_selected",
+            })
+            body.append(video_item)
 
         walker = urwid.SimpleFocusListWalker(body)
         urwid.connect_signal(walker, 'modified', self.video_selected)
@@ -88,40 +95,13 @@ class VideoList(urwid.Columns):
         return self.videos[self.video_list.body.focus]
 
 
-class VideoListItem(urwid.WidgetWrap):
-    def sizing(self):
-        return frozenset([urwid.FLOW])
-
-    signals = ["click"]
+class VideoListItem(Clickable, urwid.Text):
+    _selectable = True
 
     def __init__(self, video):
-        published_at = "{} {}{}".format(
-            video["published_at"][:10],
-            video["published_at"][11:16],
-            video["published_at"][19:],
-        )
-
+        published_at = reformat_datetime(video["published_at"])
         text = [("blue", published_at), " ", video["title"]]
-        text = SelectableText(text, wrap="clip")
-        text = urwid.AttrMap(text, None, focus_map={
-            "blue": "blue_selected",
-            "green": "blue_selected",
-        })
-
-        super().__init__(text)
-
-    def keypress(self, size, key):
-        if self._command_map[key] == urwid.ACTIVATE:
-            self._emit('click')
-            return
-
-        return key
-
-    def mouse_event(self, size, event, button, x, y, focus):
-        if button == 1:
-            self._emit('click')
-
-        return super().mouse_event(size, event, button, x, y, focus)
+        super().__init__(text, wrap="clip")
 
 
 class VideoDetails(urwid.Pile):

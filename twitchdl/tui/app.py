@@ -1,9 +1,7 @@
 import logging
 import urwid
 
-
 from concurrent.futures import ThreadPoolExecutor
-from threading import current_thread
 
 from twitchdl.tui.constants import PALETTE
 from twitchdl.tui.video_list import VideoList
@@ -95,7 +93,7 @@ class DownloadView(urwid.Overlay):
         ])
 
         top_w = urwid.LineBox(self.pile, title="Download video")
-        bottom_w = urwid.SolidFill()
+        bottom_w = tui.video_list
 
         super().__init__(
             top_w, bottom_w,
@@ -115,6 +113,7 @@ class DownloadView(urwid.Overlay):
         Called by the executor thread when the video details have been loaded.
         Uses `set_alarm_in` to run the callback in the main thread.
         """
+        # TODO: handle error
         response = future.result()
         self.tui.loop.set_alarm_in(0, self.video_loaded, user_data=response)
 
@@ -136,7 +135,7 @@ class DownloadView(urwid.Overlay):
                 (urwid.AttrMap(text, None, focus_map='blue_selected'), ('pack', None))
             )
 
-        self.top_w.title = "Select video quality"
+        self.top_w.set_title("Select video quality")
         self.pile.contents = resolutions
 
     def resolution_selected(self, widget, name):
