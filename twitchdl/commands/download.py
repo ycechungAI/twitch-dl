@@ -70,9 +70,30 @@ def _join_vods(playlist_path, target, overwrite, video):
         raise ConsoleError("Joining files failed")
 
 
-def _video_target_filename(video, format):
-    match = re.search(r"^(\d{4})-(\d{2})-(\d{2})T", video['publishedAt'])
-    date = "".join(match.groups())
+def _video_target_filename(video, args):
+    date, time = video['publishedAt'].split("T")
+
+    # match = re.search(r"^(\d{4})-(\d{2})-(\d{2})T", video['publishedAt'])
+    # date = "".join(match.groups())
+
+    subs = {
+        "date": date,
+        "time": time,
+        "title": video["title"],
+        "id": video["id"],
+        "slug": utils.slugify(video['title']),
+        "game": video['game']['name'],
+        "game_slug": utils.slugify(video['game']['name']),
+        "format": args.format
+    }
+
+    from pprint import pp
+    print("")
+    pp(video)
+    print("")
+    pp(subs)
+    print("")
+    raise ValueError()
 
     name = "_".join([
         date,
@@ -81,7 +102,7 @@ def _video_target_filename(video, format):
         utils.slugify(video['title']),
     ])
 
-    return name + "." + format
+    return name + "." + args.format
 
 
 def _clip_target_filename(clip):
@@ -231,6 +252,8 @@ def _download_video(video_id, args):
     print_out("Found: <blue>{}</blue> by <yellow>{}</yellow>".format(
         video['title'], video['creator']['displayName']))
 
+    target = _video_target_filename(video, args.format)
+
     print_out("<dim>Fetching access token...</dim>")
     access_token = twitch.get_access_token(video_id)
 
@@ -277,7 +300,6 @@ def _download_video(video_id, args):
         return
 
     print_out("\n\nJoining files...")
-    target = _video_target_filename(video, args.format)
     _join_vods(playlist_path, target, args.overwrite, video)
 
     if args.keep:
